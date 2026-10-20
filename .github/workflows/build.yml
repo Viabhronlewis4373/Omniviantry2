@@ -14,16 +14,27 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Pre-Build Credential Immunity Scan
+    - name: Scan tracked files for exposed credentials
+      shell: bash
       run: |
-        echo "=== Scanning for committed credentials & keystores ==="
-        EXPOSED_KEYS=$(find . -maxdepth 4 -name "*.keystore" -o -name "*.jks" -o -name "*.p12" -o -name ".env" | grep -v "\.env\.example" || true)
-        if [ -n "$EXPOSED_KEYS" ]; then
-          echo "::error::Committed credentials or keystores detected in repository:"
-          echo "$EXPOSED_KEYS"
+        set -euo pipefail
+        echo "=== Scanning tracked files for common API keys and credentials ==="
+        # Scan the current checkout, not GitHub Actions secrets or generated build output.
+        # The patterns target recognizable live-token formats to avoid matching ordinary API names.
+        if git grep -n -I -E \
+          'AIza[0-9A-Za-z_-]{30,}|sk-(proj-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----' \
+          -- . ':!*.lock' ':!*.md' ':!.env.example' ':!app/build/**'; then
+          echo "::error::Possible hard-coded credential detected. Remove it from tracked files and rotate/revoke it if it was real."
           exit 1
         fi
-        echo "Security Scan Passed: Zero committed credentials detected."
+
+        EXPOSED_FILES=$(find . -type f \( -name "*.keystore" -o -name "*.jks" -o -name "*.p12" -o -name ".env" \) -not -path "./.git/*" -print)
+        if [ -n "$EXPOSED_FILES" ]; then
+          echo "::error::Credential/keystore files found in the checkout:"
+          echo "$EXPOSED_FILES"
+          exit 1
+        fi
+        echo "Credential scan passed."
 
     - name: Set up JDK 21
       uses: actions/setup-java@v4
