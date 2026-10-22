@@ -15,6 +15,8 @@ import okhttp3.Response
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import com.example.utils.LogKeeper
+import android.content.Context
+import com.example.engine.omniroot.service.LocalApiAuth
 
 @JsonClass(generateAdapter = true)
 data class OmniMessage(
@@ -94,6 +96,7 @@ object OmniRootClient {
     var baseUrl: String = "http://localhost:8080/v1/chat/completions"
 
     suspend fun generateContent(
+        context: Context,
         messages: List<ChatMessage>, 
         model: String = "omni-default",
         temperature: Float? = null,
@@ -120,10 +123,14 @@ object OmniRootClient {
         val jsonBody = requestAdapter.toJson(requestData)
         val body = jsonBody.toRequestBody("application/json".toMediaType())
         
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url(baseUrl)
             .post(body)
-            .build()
+        // Only send the local proxy token to loopback endpoints. Never leak it to a custom remote URL.
+        if (requestBuilder.build().url.host in setOf("localhost", "127.0.0.1", "::1")) {
+            requestBuilder.header("Authorization", "Bearer ${LocalApiAuth.getOrCreateToken(context)}")
+        }
+        val request = requestBuilder.build()
             
         LogKeeper.log("Network", "Request to $baseUrl", jsonBody)
             

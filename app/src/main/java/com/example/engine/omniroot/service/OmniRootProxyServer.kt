@@ -1,6 +1,7 @@
 package com.example.engine.omniroot.service
 
 import android.content.Context
+import com.example.engine.omniroot.service.LocalApiAuth
 import android.util.Log
 import fi.iki.elonen.NanoHTTPD
 import java.io.IOException
@@ -40,12 +41,21 @@ class OmniRootProxyServer(port: Int, private val context: Context) : NanoHTTPD("
     }
 
     override fun serve(session: IHTTPSession): Response {
+        val authorization = session.headers.entries
+            .firstOrNull { it.key.equals("authorization", ignoreCase = true) }
+            ?.value
+        if (!LocalApiAuth.isAuthorized(context, authorization)) {
+            val unauthorized = newFixedLengthResponse(
+                Response.Status.UNAUTHORIZED,
+                MIME_PLAINTEXT,
+                "Missing or invalid bearer token"
+            )
+            unauthorized.addHeader("WWW-Authenticate", "Bearer")
+            return unauthorized
+        }
+
         if (session.method == Method.OPTIONS) {
-            val response = newFixedLengthResponse(Response.Status.OK, "text/plain", "")
-            response.addHeader("Access-Control-Allow-Origin", "*")
-            response.addHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-            response.addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization")
-            return response
+            return newFixedLengthResponse(Response.Status.METHOD_NOT_ALLOWED, MIME_PLAINTEXT, "OPTIONS is not supported")
         }
 
         if (session.uri == "/v1/chat/completions" && session.method == Method.POST) {
@@ -235,35 +245,10 @@ class OmniRootProxyServer(port: Int, private val context: Context) : NanoHTTPD("
 
                         var standardResponse = TranslationEngine.translateResponse(responseBody, targetFormat)
                         
-                        // Phase 9.5 Interception: Intercept read_file / write_file / list_files
-                        val toolCalls = standardResponse.choices?.firstOrNull()?.message?.tool_calls
-                        if (!toolCalls.isNullOrEmpty()) {
-                            for (tc in toolCalls) {
-                                val funcName = tc.function.name
-                                if (funcName == "read_file" || funcName == "write_file" || funcName == "list_files" ||
-                                    funcName == "knowledge_bits" || funcName == "save_knowledge_bit" ||
-                                    funcName == "fetch_and_cache_bit" || funcName == "query_knowledge_bits" ||
-                                    funcName == "read_knowledge_bit" || funcName == "refresh_knowledge_bit") {
-                                    val result = com.example.engine.omniroot.tools.NativeToolExecutor.execute(context, funcName, tc.function.arguments)
-                                    // Normally we would append the tool result and call the LLM again.
-                                    // For now, we will just return the tool execution result as an assistant message 
-                                    // to make it visible, or we could leave the tool_call in the response for the client.
-                                    // Let's modify the response to include the tool result as content.
-                                    standardResponse = standardResponse.copy(
-                                        choices = listOf(
-                                            com.example.ui.chat.OmniChoice(
-                                                message = com.example.ui.chat.OmniMessage(
-                                                    role = "assistant",
-                                                    content = "Tool executed: $funcName\nResult: $result"
-                                                )
-                                            )
-                                        )
-                                    )
-                                    break
-                                }
-                            }
-                        }
-                        
+                        // Do not execute model-requested native tools inside the HTTP proxy.
+                        // Return tool_calls to the authenticated API client; execution must happen
+                        // through a client-side approval flow rather than bypassing user consent.
+
                         // Calculate tokens and cost
                         val outputText = standardResponse.choices?.firstOrNull()?.message?.content ?: ""
                         val outputTokens = CompressionEngine.estimateTokens(outputText)
@@ -281,7 +266,6 @@ class OmniRootProxyServer(port: Int, private val context: Context) : NanoHTTPD("
                         val moshiResponse = Moshi.Builder().build().adapter(com.example.ui.chat.OmniResponse::class.java).toJson(finalResponse)
                         
                         val res = newFixedLengthResponse(Response.Status.OK, "application/json", moshiResponse)
-                        res.addHeader("Access-Control-Allow-Origin", "*")
                         return res
 
                     } catch (e: Exception) {
@@ -295,7 +279,6 @@ class OmniRootProxyServer(port: Int, private val context: Context) : NanoHTTPD("
                 val errorResponse = com.example.ui.chat.OmniResponse(choices = listOf(com.example.ui.chat.OmniChoice(message = com.example.ui.chat.OmniMessage(role = "assistant", content = lastErrorResponse))))
                 val errorJson = Moshi.Builder().build().adapter(com.example.ui.chat.OmniResponse::class.java).toJson(errorResponse)
                 val res = newFixedLengthResponse(Response.Status.OK, "application/json", errorJson)
-                res.addHeader("Access-Control-Allow-Origin", "*")
                 return res
 
             } catch (e: Exception) {
@@ -304,7 +287,6 @@ class OmniRootProxyServer(port: Int, private val context: Context) : NanoHTTPD("
                 val errorResponse = com.example.ui.chat.OmniResponse(choices = listOf(com.example.ui.chat.OmniChoice(message = com.example.ui.chat.OmniMessage(role = "assistant", content = "Proxy Exception: ${e.message}"))))
                 val errorJson = Moshi.Builder().build().adapter(com.example.ui.chat.OmniResponse::class.java).toJson(errorResponse)
                 val res = newFixedLengthResponse(Response.Status.OK, "application/json", errorJson)
-                res.addHeader("Access-Control-Allow-Origin", "*")
                 return res
             }
         }

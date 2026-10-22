@@ -293,6 +293,7 @@ fun ChatScreen(
                     try {
                         Toast.makeText(context, "Transcribing audio clip...", Toast.LENGTH_SHORT).show()
                         val result = OmniRootClient.generateContent(
+                            context = context,
                             messages = listOf(
                                 ChatMessage(
                                     role = MessageRole.USER,

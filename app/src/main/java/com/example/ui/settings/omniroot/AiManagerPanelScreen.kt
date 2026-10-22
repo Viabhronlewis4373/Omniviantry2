@@ -21,6 +21,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.content.Intent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import com.example.engine.omniroot.service.LocalApiAuth
 
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
@@ -55,7 +58,7 @@ fun AiManagerPanelScreen(
     val onImportClick: () -> Unit = { launcher.launch(arrayOf("*/*")) }
 
     var selectedTabIndex by remember { mutableStateOf(0) }
-    val tabs = listOf("Directory", "Active Keys", "Available Models", "Metrics", "Model Rater", "Translator", "Artifacts")
+    val tabs = listOf("Directory", "Active Keys", "Available Models", "Metrics", "Model Rater", "Translator", "Artifacts", "Local API")
 
 
     val isImporting by viewModel.isImporting.collectAsState()
@@ -109,6 +112,7 @@ fun AiManagerPanelScreen(
                     4 -> ModelRaterTab(viewModel)
                     5 -> TranslatorTab()
                     6 -> ArtifactProvidersTab()
+                    7 -> LocalApiTab(context)
                 }
             }
         }
@@ -426,5 +430,65 @@ fun ModelRaterTab(viewModel: AiManagerViewModel) {
                 }
             }
         }
+    }
+}
+
+
+@Composable
+fun LocalApiTab(context: android.content.Context) {
+    val clipboardManager = LocalClipboardManager.current
+    var token by remember(context) { mutableStateOf(LocalApiAuth.getOrCreateToken(context)) }
+    var revealToken by remember { mutableStateOf(false) }
+    var copied by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Local OpenAI-compatible API", style = MaterialTheme.typography.titleLarge)
+        Text(
+            "The proxy listens on this device only. Requests must include the bearer token below. " +
+                "Do not share the token: anyone who has it can use your configured AI providers and may incur API charges.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        OutlinedTextField(
+            value = "http://127.0.0.1:8080/v1/chat/completions",
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Endpoint") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = if (revealToken) token else "••••••••••••••••••••••••••••••••",
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Bearer token") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { revealToken = !revealToken }) {
+                Text(if (revealToken) "Hide token" else "Reveal token")
+            }
+            Button(onClick = {
+                clipboardManager.setText(AnnotatedString(token))
+                copied = true
+            }) {
+                Text(if (copied) "Copied" else "Copy token")
+            }
+        }
+        OutlinedButton(onClick = {
+            token = LocalApiAuth.rotateToken(context)
+            copied = false
+            revealToken = false
+        }) {
+            Text("Rotate token")
+        }
+        Text(
+            "Rotating the token immediately invalidates clients using the previous token. " +
+                "Browser-based clients may be blocked by cross-origin restrictions; wildcard CORS is intentionally disabled.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
